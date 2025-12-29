@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>極限拼圖挑戰 - 1000片版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #1a1a1a; touch-action: none; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; cursor: grab; }
+        #canvas-container.grabbing { cursor: grabbing; }
+        
+        /* UI Overlay Styles */
+        .ui-panel {
+            position: absolute;
+            z-index: 10;
+            background: rgba(30, 30, 30, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: white;
+            padding: 1.5rem;
+            border-radius: 1rem;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            transition: all 0.3s ease;
+        }
+
+        #start-screen {
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 90%; max-width: 500px;
+            text-align: center;
+        }
+
+        #game-controls {
+            top: 1rem; right: 1rem;
+            display: none;
+            padding: 1rem;
+        }
+
+        #progress-bar-container {
+            bottom: 2rem; left: 50%;
+            transform: translateX(-50%);
+            width: 300px;
+            display: none;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #6366f1, #4f46e5);
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: transform 0.1s, filter 0.2s;
+        }
+        .btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
+        .btn:active { transform: translateY(1px); }
+        .btn-secondary { background: #374151; }
+
+        .upload-box {
+            border: 2px dashed #4b5563;
+            border-radius: 0.75rem;
+            padding: 2rem;
+            cursor: pointer;
+            margin-bottom: 1.5rem;
+            transition: border-color 0.2s;
+        }
+        .upload-box:hover { border-color: #818cf8; background: rgba(255,255,255,0.05); }
+
+        /* Loader */
+        .loader {
+            border: 3px solid rgba(255,255,255,0.1);
+            border-top: 3px solid #6366f1;
+            border-radius: 50%;
+            width: 24px; height: 24px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* Confetti */
+        #confetti-canvas { position: absolute; top:0; left:0; width:100%; height:100%; pointer-events: none; z-index: 20; }
+    </style>
+</head>
+<body>
+
+    <!-- Canvas -->
+    <div id="canvas-container">
+        <canvas id="puzzle-canvas"></canvas>
+    </div>
+    <canvas id="confetti-canvas"></canvas>
+
+    <!-- Start Screen -->
+    <div id="start-screen" class="ui-panel">
+        <h1 class="text-3xl font-bold mb-2 text-indigo-400">極限拼圖生成器</h1>
+        <p class="text-gray-400 mb-6 text-sm">上傳圖片，將其轉化為高達 1000 片的挑戰。</p>
+
+        <label for="image-upload" class="upload-box block">
+            <div id="upload-preview" class="hidden mb-3">
+                <img id="preview-img" class="h-32 mx-auto object-contain rounded" />
+            </div>
+            <div id="upload-placeholder">
+                <svg class="w-10 h-10 mx-auto text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                <span class="text-gray-300 font-medium">點擊選擇圖片 (或拖放至此)</span>
+                <p class="text-xs text-gray-500 mt-1">支援 JPG, PNG</p>
+            </div>
+            <input type="file" id="image-upload" accept="image/*" class="hidden">
+        </label>
+
+        <div class="mb-6 text-left">
+            <label class="block text-sm font-medium text-gray-300 mb-2">選擇片數難度</label>
+            <select id="piece-count" class="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white focus:outline-none focus:border-indigo-500">
+                <option value="25">25 片 (極簡熱身)</option>
+                <option value="100" selected>100 片 (休閒挑戰)</option>
+                <option value="300">300 片 (進階玩家)</option>
+                <option value="500">500 片 (專家級)</option>
+                <option value="1000">1000 片 (瘋狂模式 - 需大螢幕)</option>
+            </select>
+        </div>
+
+        <button id="start-btn" class="btn w-full text-lg shadow-lg opacity-50 cursor-not-allowed" disabled>
+            開始拼圖
+        </button>
+    </div>
+
+    <!-- In-Game Controls -->
+    <div id="game-controls" class="ui-panel flex flex-col gap-2">
+        <div class="text-xs text-gray-400 mb-1">操作說明</div>
+        <div class="text-xs text-gray-500">🖱️ 左鍵拖曳碎片</div>
+        <div class="text-xs text-gray-500">🖱️ 滾輪縮放畫布</div>
+        <div class="text-xs text-gray-500">🖱️ 右鍵拖曳平移視野</div>
+        <hr class="border-gray-700 my-2">
+        <button id="toggle-preview-btn" class="btn btn-secondary text-xs py-1">按住看原圖 (Space)</button>
+        <button id="scatter-btn" class="btn btn-secondary text-xs py-1 mt-1">一鍵散開</button>
+        <button id="reset-zoom-btn" class="btn btn-secondary text-xs py-1 mt-1">重置視角</button>
+        <button onclick="location.reload()" class="btn bg-red-600 hover:bg-red-500 text-xs py-1 mt-4">重新開始</button>
+    </div>
+
+    <!-- Progress -->
+    <div id="progress-bar-container" class="ui-panel py-2 px-4 flex items-center gap-3">
+        <div class="text-sm font-bold whitespace-nowrap"><span id="progress-text">0</span>%</div>
+        <div class="w-full bg-gray-700 h-2 rounded-full overflow-hidden">
+            <div id="progress-fill" class="bg-indigo-500 h-full w-0 transition-all duration-300"></div>
+        </div>
+    </div>
+
+<script>
+/**
+ * PUZZLE ENGINE
+ * Handles geometry, interaction, and rendering for high piece counts.
+ */
+
+// --- Configuration & State ---
+const state = {
+    pieces: [],
+    groups: [], // Array of arrays, each inner array contains piece IDs attached together
+    img: null,
+    canvas: null,
+    ctx: null,
+    width: 0,
+    height: 0,
+    pieceCount: 100,
+    rows: 0,
+    cols: 0,
+    pieceWidth: 0,
+    pieceHeight: 0,
+    
+    // Viewport
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0,
+    isDraggingViewport: false,
+    lastMouseX: 0,
+    lastMouseY: 0,
+
+    // Interaction
+    selectedGroup: null, // The group currently being dragged
+    hoveredPiece: null,
+    isDragging: false,
+    dragStartX: 0,
+    dragStartY: 0,
+    
+    // Game
+    isSolved: false,
+    showPreview: false,
+    snapDistance: 0 // Will be calculated based on piece size
+};
+
+const canvasEl = document.getElementById('puzzle-canvas');
+const ctx = canvasEl.getContext('2d', { alpha: false }); // Optimize for no transparency on bg
+const container = document.getElementById('canvas-container');
+
+// --- Initialization ---
+
+function init() {
+    // FIX: Assign global context to state object immediately
+    state.canvas = canvasEl;
+    state.ctx = ctx;
+
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+    
+    // Input Handling
+    document.getElementById('image-upload').addEventListener('change', handleImageUpload);
+    document.getElementById('start-btn').addEventListener('click', startGame);
+    
+    // Game Controls
+    document.getElementById('reset-zoom-btn').addEventListener('click', resetView);
+    document.getElementById('scatter-btn').addEventListener('click', scatterPieces);
+    
+    const previewBtn = document.getElementById('toggle-preview-btn');
+    previewBtn.addEventListener('mousedown', () => state.showPreview = true);
+    previewBtn.addEventListener('mouseup', () => state.showPreview = false);
+    previewBtn.addEventListener('mouseleave', () => state.showPreview = false);
+    previewBtn.addEventListener('touchstart', (e) => { e.preventDefault(); state.showPreview = true; });
+    previewBtn.addEventListener('touchend', (e) => { e.preventDefault(); state.showPreview = false; });
+
+    // Keyboard
+    window.addEventListener('keydown', (e) => { if(e.code === 'Space') state.showPreview = true; });
+    window.addEventListener('keyup', (e) => { if(e.code === 'Space') state.showPreview = false; });
+
+    // Mouse / Touch Events on Canvas
+    container.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('mousemove', onPointerMove);
+    window.addEventListener('mouseup', onPointerUp);
+    container.addEventListener('wheel', onWheel, { passive: false });
+    container.addEventListener('contextmenu', e => e.preventDefault()); // Disable context menu for right-click pan
+
+    // Animation Loop
+    requestAnimationFrame(loop);
+}
+
+function resizeCanvas() {
+    canvasEl.width = window.innerWidth;
+    canvasEl.height = window.innerHeight;
+    state.width = canvasEl.width;
+    state.height = canvasEl.height;
+}
+
+function handleImageUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+            state.img = img;
+            // Update UI
+            document.getElementById('preview-img').src = event.target.result;
+            document.getElementById('upload-preview').classList.remove('hidden');
+            document.getElementById('upload-placeholder').classList.add('hidden');
+            const btn = document.getElementById('start-btn');
+            btn.disabled = false;
+            btn.classList.remove('opacity-50', 'cursor-not-allowed');
+            btn.textContent = "開始生成拼圖";
+        };
+        img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+}
+
+// --- Game Logic ---
+
+function startGame() {
+    if (!state.img) return;
+
+    // Get Settings
+    const countVal = parseInt(document.getElementById('piece-count').value);
+    state.pieceCount = countVal;
+    
+    // UI Transition
+    document.getElementById('start-screen').style.display = 'none';
+    document.getElementById('game-controls').style.display = 'flex';
+    document.getElementById('progress-bar-container').style.display = 'flex';
+
+    generatePuzzle();
+}
+
+function generatePuzzle() {
+    const img = state.img;
+    const ratio = img.width / img.height;
+    
+    // Calculate Rows/Cols to approximate piece count while maintaining aspect ratio
+    state.cols = Math.round(Math.sqrt(state.pieceCount * ratio));
+    state.rows = Math.round(state.pieceCount / state.cols);
+    state.pieceCount = state.cols * state.rows; // Adjust exact count
+
+    state.pieceWidth = img.width / state.cols;
+    state.pieceHeight = img.height / state.rows;
+    state.snapDistance = Math.min(state.pieceWidth, state.pieceHeight) * 0.4; // 40% strictness
+
+    // Initialize View
+    resetView();
+
+    // Generate Shapes
+    // Types: 1 = tab (out), -1 = slot (in), 0 = edge
+    state.pieces = [];
+    state.groups = [];
+
+    for (let r = 0; r < state.rows; r++) {
+        for (let c = 0; c < state.cols; c++) {
+            const index = r * state.cols + c;
+            
+            // Edges are flat (0)
+            const top = (r === 0) ? 0 : -state.pieces[(r - 1) * state.cols + c].shape.bottom;
+            const right = (c === state.cols - 1) ? 0 : (Math.random() > 0.5 ? 1 : -1);
+            const bottom = (r === state.rows - 1) ? 0 : (Math.random() > 0.5 ? 1 : -1);
+            const left = (c === 0) ? 0 : -state.pieces[index - 1].shape.right;
+
+            const piece = {
+                id: index,
+                r, c,
+                x: 0, y: 0, // Current position (will be randomized)
+                targetX: c * state.pieceWidth,
+                targetY: r * state.pieceHeight,
+                width: state.pieceWidth,
+                height: state.pieceHeight,
+                shape: { top, right, bottom, left },
+                isDragging: false
+            };
+            
+            state.pieces.push(piece);
+            state.groups.push([index]); // Each piece starts in its own group
+        }
+    }
+
+    scatterPieces();
+}
+
+function scatterPieces() {
+    // Spread pieces randomly around the "table", but keep them somewhat reachable
+    const tablePadding = 200;
+    const spreadW = state.img.width * 1.5;
+    const spreadH = state.img.height * 1.5;
+
+    state.pieces.forEach(p => {
+        p.x = (Math.random() * spreadW) - (spreadW/4);
+        p.y = (Math.random() * spreadH) - (spreadH/4);
+    });
+
+    // Reset groups just in case, unless we want to keep solved parts (let's keep solved logic separate)
+    // For this simple "Scatter" button, we won't break existing connections, 
+    // but the initial generation calls this too.
+    if (state.groups.length === state.pieces.length) {
+        // Initial scatter
+    }
+}
+
+function resetView() {
+    // Center the puzzle space
+    // Initial scale to fit screen
+    const padding = 50;
+    const scaleX = (state.width - padding*2) / state.img.width;
+    const scaleY = (state.height - padding*2) / state.img.height;
+    state.scale = Math.min(scaleX, scaleY, 1) * 0.8; // Start slightly zoomed out
+    
+    // Center logic
+    const imgDisplayW = state.img.width * state.scale;
+    const imgDisplayH = state.img.height * state.scale;
+    state.offsetX = (state.width - imgDisplayW) / 2;
+    state.offsetY = (state.height - imgDisplayH) / 2;
+}
+
+// --- Interaction Handlers ---
+
+function onPointerDown(e) {
+    e.preventDefault();
+    const isRightClick = e.button === 2;
+    const mouseX = e.clientX;
+    const mouseY = e.clientY;
+
+    // Screen to World coords
+    const worldX = (mouseX - state.offsetX) / state.scale;
+    const worldY = (mouseY - state.offsetY) / state.scale;
+
+    state.lastMouseX = mouseX;
+    state.lastMouseY = mouseY;
+
+    if (isRightClick || e.ctrlKey) {
+        state.isDraggingViewport = true;
+        container.classList.add('grabbing');
+        return;
+    }
+
+    // Hit Detection (Reverse order to grab top pieces first)
+    // Simple bounding box check is okay for performance, exact shape check is expensive for 1000 pieces
+    // We check groups.
+    let foundGroup = null;
+
+    // Helper: Is point in piece box?
+    const hitPiece = (p) => {
+        return worldX >= p.x && worldX <= p.x + p.width &&
+               worldY >= p.y && worldY <= p.y + p.height;
+    };
+
+    // Iterate backwards through groups to find the "top" one
+    // We need to maintain a Z-order. For now, let's assume the array order implies Z-order (draw last = on top).
+    // To implement "bring to front", we move the group to end of array.
+    for (let i = state.groups.length - 1; i >= 0; i--) {
+        const group = state.groups[i];
+        const hit = group.some(pid => hitPiece(state.pieces[pid]));
+        if (hit) {
+            foundGroup = group;
+            // Move group to end of array (render on top)
+            state.groups.splice(i, 1);
+            state.groups.push(foundGroup);
+            break;
+        }
+    }
+
+    if (foundGroup) {
+        state.selectedGroup = foundGroup;
+        state.isDragging = true;
+        // Calculate offsets for every piece in group
+        state.dragStartX = worldX;
+        state.dragStartY = worldY;
+    } else {
+        // Clicked on empty space -> drag viewport
+        state.isDraggingViewport = true;
+        container.classList.add('grabbing');
+    }
+}
+
+function onPointerMove(e) {
+    e.preventDefault();
+    const mouseX = e.clientX;
+    const mouseY = e.clientY;
+    const dx = mouseX - state.lastMouseX;
+    const dy = mouseY - state.lastMouseY;
+
+    if (state.isDraggingViewport) {
+        state.offsetX += dx;
+        state.offsetY += dy;
+    } else if (state.isDragging && state.selectedGroup) {
+        // Move pieces
+        const scale = state.scale;
+        const worldDx = dx / scale;
+        const worldDy = dy / scale;
+
+        state.selectedGroup.forEach(pid => {
+            state.pieces[pid].x += worldDx;
+            state.pieces[pid].y += worldDy;
+        });
+    }
+
+    state.lastMouseX = mouseX;
+    state.lastMouseY = mouseY;
+}
+
+function onPointerUp(e) {
+    if (state.isDragging && state.selectedGroup) {
+        // Snap Logic
+        // Check neighbors of all pieces in the moving group against pieces NOT in the group
+        const group = state.selectedGroup;
+        let merged = false;
+
+        // Optimization: Only check boundary pieces of the group? 
+        // For simplicity: Check all pieces in group against all reasonable neighbors
+        
+        // We need to know which pieces are connected to which.
+        // Piece at (r,c) has neighbors (r-1,c), (r+1,c), (r,c-1), (r,c+1)
+        
+        const piecesToCheck = []; 
+        // Set of group IDs to avoid checking against self
+        const groupSet = new Set(group);
+
+        for (const pid of group) {
+            const p = state.pieces[pid];
+            // Theoretical neighbors
+            const neighbors = [
+                { r: p.r-1, c: p.c, type: 'bottom', targetType: 'top' },
+                { r: p.r+1, c: p.c, type: 'top', targetType: 'bottom' },
+                { r: p.r, c: p.c-1, type: 'right', targetType: 'left' },
+                { r: p.r, c: p.c+1, type: 'left', targetType: 'right' }
+            ];
+
+            for (const n of neighbors) {
+                if (n.r >= 0 && n.r < state.rows && n.c >= 0 && n.c < state.cols) {
+                    const neighborId = n.r * state.cols + n.c;
+                    if (!groupSet.has(neighborId)) {
+                        // This neighbor is NOT in the current drag group. Check distance.
+                        const neighborPiece = state.pieces[neighborId];
+                        
+                        // Calculate expected position of 'p' relative to 'neighborPiece'
+                        // If p is at (0,0), neighbor should be at (0, -height) if it's Top.
+                        // So p.y - neighbor.y should be pieceHeight.
+                        
+                        // Distance Check
+                        const dist = Math.hypot(
+                            (p.x - p.targetX) - (neighborPiece.x - neighborPiece.targetX),
+                            (p.y - p.targetY) - (neighborPiece.y - neighborPiece.targetY)
+                        );
+
+                        if (dist < state.snapDistance) {
+                            // SNAP!
+                            mergeGroups(group, neighborId);
+                            merged = true;
+                            // Play sound or visual effect here?
+                            break; 
+                        }
+                    }
+                }
+            }
+            if (merged) break;
+        }
+
+        if (merged) {
+            checkWin();
+        }
+    }
+
+    state.isDragging = false;
+    state.selectedGroup = null;
+    state.isDraggingViewport = false;
+    container.classList.remove('grabbing');
+}
+
+function onWheel(e) {
+    e.preventDefault();
+    const zoomIntensity = 0.1;
+    const direction = e.deltaY > 0 ? -1 : 1;
+    const factor = 1 + (direction * zoomIntensity);
+    
+    // Zoom towards mouse pointer
+    const mouseX = e.clientX;
+    const mouseY = e.clientY;
+    
+    // Calculate world point under mouse before zoom
+    const worldX = (mouseX - state.offsetX) / state.scale;
+    const worldY = (mouseY - state.offsetY) / state.scale;
+    
+    // Apply zoom
+    const newScale = Math.max(0.1, Math.min(5, state.scale * factor));
+    
+    // Adjust offset to keep world point static
+    state.offsetX = mouseX - worldX * newScale;
+    state.offsetY = mouseY - worldY * newScale;
+    state.scale = newScale;
+}
+
+function mergeGroups(movingGroupIds, targetPieceId) {
+    // Find group containing targetPieceId
+    let targetGroupIdx = -1;
+    for (let i = 0; i < state.groups.length; i++) {
+        if (state.groups[i].includes(targetPieceId)) {
+            targetGroupIdx = i;
+            break;
+        }
+    }
+
+    if (targetGroupIdx === -1) return; // Should not happen
+    
+    const targetGroup = state.groups[targetGroupIdx];
+    
+    // Align moving group to target group
+    // Use the specific connection pair to calculate offset
+    // Just force the moving group to align perfectly with the target group based on target coordinates
+    // We take one piece from target group as anchor
+    const anchor = state.pieces[targetPieceId];
+    // Calculate the delta needed for the moving group
+    // Any piece in moving group (let's say index 0) needs to be at its target relative to anchor
+    
+    // Actually simpler: 
+    // Snap means "Set relative position to correct".
+    // We calculate the offset based on the *anchor* piece's current position vs its correct position.
+    // Error = anchor.current - anchor.target
+    // Apply this Error to all pieces in moving group so they align with anchor.
+    
+    const driftX = anchor.x - anchor.targetX;
+    const driftY = anchor.y - anchor.targetY;
+    
+    movingGroupIds.forEach(pid => {
+        const p = state.pieces[pid];
+        p.x = p.targetX + driftX;
+        p.y = p.targetY + driftY;
+    });
+
+    // Merge arrays
+    const newGroup = targetGroup.concat(movingGroupIds);
+    state.groups[targetGroupIdx] = newGroup;
+    
+    // Remove the old moving group entry (which is at the end because we moved it to top)
+    // Be careful with indices since we modified arrays.
+    // Easier: Filter out the moving group from groups list
+    state.groups = state.groups.filter(g => g !== movingGroupIds);
+
+    // Update Progress
+    updateProgress();
+}
+
+function updateProgress() {
+    const totalPieces = state.pieces.length;
+    // Progress is vaguely defined by how few groups remain. 
+    // If 1 group => 100%. If totalPieces groups => 0%.
+    const groupsCount = state.groups.length;
+    const solved = totalPieces - groupsCount;
+    const percent = Math.floor((solved / (totalPieces - 1)) * 100);
+    
+    document.getElementById('progress-text').innerText = isNaN(percent) ? 0 : percent;
+    document.getElementById('progress-fill').style.width = (isNaN(percent) ? 0 : percent) + '%';
+}
+
+function checkWin() {
+    if (state.groups.length === 1) {
+        state.isSolved = true;
+        launchConfetti();
+        // Snap the whole puzzle to center
+        const group = state.groups[0];
+        // Center animation could go here
+    }
+}
+
+// --- Rendering ---
+
+function loop() {
+    draw();
+    requestAnimationFrame(loop);
+}
+
+function draw() {
+    const { ctx, canvas, width, height, scale, offsetX, offsetY, img, pieces, groups } = state;
+
+    // Clear Screen
+    if (ctx) { // Add safety check
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(0, 0, width, height);
+    }
+
+    if (!img) return;
+
+    // --- Draw Grid/Background (Optional) ---
+    // Draw a subtle placeholder box where the puzzle SHOULD be to help users
+    /*
+    ctx.save();
+    ctx.translate(offsetX, offsetY);
+    ctx.scale(scale, scale);
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 2 / scale;
+    ctx.strokeRect(0, 0, img.width, img.height);
+    ctx.restore();
+    */
+
+    // --- Draw Preview (if active) ---
+    if (state.showPreview && ctx) {
+        ctx.save();
+        ctx.translate(offsetX, offsetY);
+        ctx.scale(scale, scale);
+        ctx.globalAlpha = 0.5;
+        ctx.drawImage(img, 0, 0);
+        ctx.restore();
+    }
+
+    // --- Draw Pieces ---
+    // Optimization: Only check viewport visibility? 
+    // For 1000 pieces, iteration is fast, draw calls are slow.
+    
+    if (ctx) {
+        ctx.save();
+        ctx.translate(offsetX, offsetY);
+        ctx.scale(scale, scale);
+
+        const piecePath = new Path2D(); // Reusable? No, shapes vary.
+
+        // Draw each group
+        for (const group of groups) {
+            const isSelected = (group === state.selectedGroup);
+            
+            // Shadow for lifting effect
+            if (isSelected) {
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 10;
+                ctx.shadowOffsetX = 5;
+                ctx.shadowOffsetY = 5;
+                // Draw order: Lifted piece is on top (handled by loop order)
+            } else {
+                ctx.shadowColor = 'transparent';
+            }
+
+            for (const pid of group) {
+                const p = pieces[pid];
+                
+                // Culling check: Is piece within viewport?
+                // Screen coords: p.x * scale + offsetX
+                const screenX = p.x * scale + offsetX;
+                const screenY = p.y * scale + offsetY;
+                const screenW = p.width * scale;
+                const screenH = p.height * scale;
+                
+                if (screenX > width || screenX + screenW < 0 || 
+                    screenY > height || screenY + screenH < 0) {
+                    continue; 
+                }
+
+                drawPiece(ctx, p, img);
+            }
+        }
+        
+        ctx.restore();
+    }
+}
+
+// The logic to draw the jigsaw shape
+function drawPiece(ctx, p, img) {
+    ctx.save();
+    
+    // We clip to the path, then draw the image
+    // Note: p.x, p.y is the top-left of the bounding box (including tabs potentially?)
+    // Actually in our logic, x/y is top-left of the "core" rectangle. Tabs stick out.
+    // We need to adjust drawing origin.
+    
+    const sz = Math.min(p.width, p.height);
+    const neck = sz * 0.15; // Width of the tab neck
+    const tabSize = sz * 0.25; // Height of the tab
+    const tabW = sz * 0.3; // Width of tab bulb
+
+    // Path tracing
+    ctx.beginPath();
+    
+    // Top Left Start
+    let currX = p.x;
+    let currY = p.y;
+    ctx.moveTo(currX, currY);
+
+    // TOP Edge
+    if (p.shape.top !== 0) {
+        drawSide(ctx, currX, currY, p.width, 0, p.shape.top, neck, tabSize, tabW);
+    } else {
+        ctx.lineTo(currX + p.width, currY);
+    }
+    currX += p.width;
+
+    // RIGHT Edge
+    if (p.shape.right !== 0) {
+        drawSide(ctx, currX, currY, 0, p.height, p.shape.right, neck, tabSize, tabW);
+    } else {
+        ctx.lineTo(currX, currY + p.height);
+    }
+    currY += p.height;
+
+    // BOTTOM Edge
+    if (p.shape.bottom !== 0) {
+        drawSide(ctx, currX, currY, -p.width, 0, p.shape.bottom, neck, tabSize, tabW);
+    } else {
+        ctx.lineTo(currX - p.width, currY);
+    }
+    currX -= p.width;
+
+    // LEFT Edge
+    if (p.shape.left !== 0) {
+        drawSide(ctx, currX, currY, 0, -p.height, p.shape.left, neck, tabSize, tabW);
+    } else {
+        ctx.lineTo(currX, currY - p.height);
+    }
+    
+    ctx.closePath();
+
+    // Clip and Draw Image
+    ctx.clip();
+    
+    // The image must be drawn offset so the correct part shows in the shape
+    // Image drawing coord = p.x - p.targetX (This aligns the "cutout" to the "piece position")
+    // Wait, targetX is where on the original image this piece belongs.
+    // So if piece is at 100,100 but belongs at 0,0, we draw image at 100,100 shifted by -0,-0?
+    // Correct logic: drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh)
+    // We want the part of the image at (p.targetX, p.targetY) to appear at (p.x, p.y).
+    // Because of the Bezier tabs, we need to draw a bit more than just width/height.
+    // Easier approach: draw whole image at offset.
+    
+    const drawX = p.x - p.targetX;
+    const drawY = p.y - p.targetY;
+    
+    // Optimization: Draw only the relevant slice of the image?
+    // Drawing the full 4k image 1000 times will kill FPS.
+    // We MUST use the source clipping of drawImage.
+    
+    // Source: targetX - margin, targetY - margin
+    // Dest: x - margin, y - margin
+    const margin = tabSize * 2; 
+    
+    ctx.drawImage(img, 
+        p.targetX - margin, p.targetY - margin, p.width + margin*2, p.height + margin*2,
+        p.x - margin, p.y - margin, p.width + margin*2, p.height + margin*2
+    );
+
+    // Draw Outline (for visibility)
+    ctx.stroke();
+    // Bevel effect (optional)
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)'; // Inner dark line
+    
+    ctx.restore();
+}
+
+// Bezier Curve generator for Jigsaw Tabs
+function drawSide(ctx, x, y, dx, dy, type, neck, tabHeight, tabWidth) {
+    // Determine orientation
+    const isHorizontal = Math.abs(dx) > Math.abs(dy);
+    const len = Math.abs(isHorizontal ? dx : dy);
+    const sign = type; // 1 = out, -1 = in
+    
+    // Base points along the line
+    const p1 = 0.35;
+    const p2 = 0.65;
+    
+    // If horizontal, we move along X, vary Y
+    // If vertical, we move along Y, vary X
+    
+    // We can transform the context to make math generic, but let's do manual math for speed?
+    // Actually, rotate/translate context is cleaner code.
+    
+    ctx.save();
+    ctx.translate(x, y);
+    const angle = Math.atan2(dy, dx);
+    ctx.rotate(angle);
+    
+    // Now we draw from (0,0) to (len, 0) with a bump in the middle
+    // Bump goes towards -Y for type 1 (out) relative to CW path? 
+    // Puzzle paths are usually Clockwise. 
+    // Top: L->R. Out is Up (-Y).
+    // Right: T->B. Out is Right (+X, which is -Y in rotated frame? No).
+    // Let's standardise: "Out" means "Left" of the vector line.
+    
+    const h = sign * tabHeight; 
+    const w = tabWidth;
+    
+    // Curve Logic (Standard Jigsaw Shape)
+    // 1. Line to start of neck
+    ctx.lineTo(len * p1, 0);
+    
+    // 2. Curve out
+    ctx.bezierCurveTo(
+        len * p1, -h * 0.5, 
+        len * 0.5 - w, -h, 
+        len * 0.5 - w, -h
+    );
+    
+    // 3. Curve across top
+    ctx.bezierCurveTo(
+        len * 0.5 - w, -h * 1.5, // Bulbous
+        len * 0.5 + w, -h * 1.5,
+        len * 0.5 + w, -h
+    );
+
+    // 4. Curve back in
+    ctx.bezierCurveTo(
+        len * 0.5 + w, -h,
+        len * p2, -h * 0.5,
+        len * p2, 0
+    );
+    
+    ctx.lineTo(len, 0);
+    
+    ctx.restore();
+}
+
+// --- Confetti Effect (Simple) ---
+function launchConfetti() {
+    const cCanvas = document.getElementById('confetti-canvas');
+    const cCtx = cCanvas.getContext('2d');
+    cCanvas.width = window.innerWidth;
+    cCanvas.height = window.innerHeight;
+    
+    const particles = [];
+    const colors = ['#f00', '#0f0', '#00f', '#ff0', '#0ff', '#f0f'];
+    
+    for(let i=0; i<300; i++) {
+        particles.push({
+            x: cCanvas.width/2, y: cCanvas.height/2,
+            vx: (Math.random() - 0.5) * 20,
+            vy: (Math.random() - 0.5) * 20,
+            color: colors[Math.floor(Math.random() * colors.length)],
+            life: 1.0
+        });
+    }
+    
+    function animateConfetti() {
+        cCtx.clearRect(0, 0, cCanvas.width, cCanvas.height);
+        let active = false;
+        particles.forEach(p => {
+            if(p.life > 0) {
+                active = true;
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vy += 0.2; // Gravity
+                p.life -= 0.01;
+                cCtx.fillStyle = p.color;
+                cCtx.globalAlpha = p.life;
+                cCtx.fillRect(p.x, p.y, 8, 8);
+            }
+        });
+        if(active) requestAnimationFrame(animateConfetti);
+        else cCtx.clearRect(0,0, cCanvas.width, cCanvas.height);
+    }
+    animateConfetti();
+}
+
+// Init
+init();
+
+</script>
+</body>
+</html>
